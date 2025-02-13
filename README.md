@@ -1,6 +1,2 @@
-testest
-
-# math formula
-
-afvafv: $y=\alpha x$
-
+# 微信聊天机器人
+本项目是一个基于微信的自动化聊天机器人。
