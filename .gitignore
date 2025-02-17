@@ -29,3 +29,8 @@ pip-delete-this-directory.txt
 
 # Ignore cache files
 .cache/
+
+# others
+build
+dist
+main.spec

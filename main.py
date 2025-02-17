@@ -1,7 +1,7 @@
 
 import time
 import logging
-import datetime
+import date
 
 from wxauto import WeChat
 from openai import OpenAI
@@ -10,29 +10,28 @@ from conversation import Conversation
 from reminder_manager import ReminderManager
 from helpers import calculate_default_reminder_time, extract_time_correction
 
-# Set a maximum output length (in characters) to prevent abuse.
+# Set max output length
 MAX_OUTPUT_LENGTH = 300
 
 def main():
-    # Configure logging to include timestamps and log levels.
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S"
     )
-
-    # --- User Inputs ---
+    
+    # User Inputs
     apikey = input("Enter OpenAI API Key: ")
     model_name = input("Enter Model Name: ")
     system_prompt = input("Enter System Role Prompt: ")
 
-    # --- Initialize OpenAI Client ---
+    # Initialize OpenAI Client and WeChat auto
     client = OpenAI(api_key=apikey, base_url="https://api.siliconflow.cn/v1")
 
-    # --- Initialize WeChat Automation ---
     wx = WeChat()
     agent_name = "@" + wx.nickname  # Bot's WeChat nickname
-
+    
     # Initialize conversation context with the system prompt.
     conversation = Conversation(system_prompt, max_rounds=15)
 
