@@ -2,11 +2,12 @@ import time
 import logging
 import sys
 import re
+import json
 from wxauto import WeChat
 from openai import OpenAI
 
+# ----- Logging and Utility Functions -----
 def setup_logging():
-    # Set up logging to file (chatbot.log) and console.
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     
@@ -23,7 +24,6 @@ def setup_logging():
     logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
     
-    # Log any uncaught exceptions.
     def log_exceptions(exc_type, exc_value, exc_traceback):
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
@@ -32,103 +32,144 @@ def setup_logging():
     sys.excepthook = log_exceptions
 
 def clean_sender(sender: str) -> str:
-    """
-    Cleans the sender's name by:
-      1. Removing all leading and trailing whitespace,
-      2. Removing any trailing member count pattern such as "(3)" or "（3）",
-      3. And trimming any residual whitespace.
-    Example: "测试 (3)" -> "测试", "group(5)" -> "group", "测试 " -> "测试"
-    """
     cleaned = sender.strip()
     cleaned = re.sub(r'[\(（]\s*\d+\s*[\)）]', '', cleaned)
     return cleaned.strip()
 
 def trim_conversation_history(messages, max_rounds=15):
-    """
-    Keep system messages intact and trim non-system messages to the most recent rounds.
-    Each round consists of a user and an assistant message (2 messages per round).
-    """
     system_messages = [m for m in messages if m["role"] == "system"]
     other_messages = [m for m in messages if m["role"] != "system"]
     trimmed_other = other_messages[-max_rounds * 2:]
     return system_messages + trimmed_other
 
+def save_conversation_log(conversation):
+    try:
+        with open("conversation_history.log", "w", encoding="utf-8") as f:
+            json.dump(conversation, f, ensure_ascii=False, indent=2)
+        logging.info("Conversation history saved to conversation_history.log")
+    except Exception as e:
+        logging.error("Error saving conversation history: %s", e, exc_info=True)
+
+# ----- Summarization and Context Building -----
+def summarize_history(client, text):
+    """
+    Uses DeepSeek-V3 to generate a short summary of the provided text.
+    The prompt instructs: "总结对话历史(字数不要太多)："
+    """
+    logging.info("Triggering summarization for older messages (text length: %d characters)", len(text))
+    try:
+        summary_response = client.chat.completions.create(
+            model="deepseek-ai/DeepSeek-V3",
+            messages=[{"role": "user", "content": "总结对话历史(字数不要太多)：\n" + text}],
+            temperature=0.5,
+            max_tokens=100
+        )
+        summary = summary_response.choices[0].message.content.strip()
+        logging.info("Summarization complete. Summary: %s", summary)
+        return summary
+    except Exception as e:
+        logging.error("Error summarizing conversation: %s", e, exc_info=True)
+        return ""
+
+def build_context(conversation, system_prompt, client, round_threshold=5, recent_rounds=2):
+    """
+    Build the conversation context for the API call.
+    
+    If non-system messages exceed round_threshold rounds, summarize older messages.
+    Then build the context as:
+      - system prompt,
+      - (optionally) summary message,
+      - recent rounds,
+      - and a final system instruction for truncation.
+    """
+    non_system = [m for m in conversation if m["role"] != "system"]
+    summary_message = None
+    if len(non_system) > round_threshold * 2:
+        older_messages = non_system[:-recent_rounds * 2]
+        text = "\n".join([f'{m["role"]}：{m["content"]}' for m in older_messages])
+        summary = summarize_history(client, text)
+        if summary:
+            summary_message = {"role": "system", "content": "对话摘要：" + summary}
+            logging.info("Older messages summarized into a summary message.")
+        else:
+            logging.info("Summarization triggered but no summary was produced.")
+    else:
+        logging.info("Conversation history below summarization threshold; no summary generated.")
+    
+    recent_messages = non_system[-recent_rounds * 2:] if len(non_system) >= recent_rounds * 2 else non_system
+    
+    context = [{"role": "system", "content": system_prompt}]
+    if summary_message:
+        context.append(summary_message)
+    context.extend(recent_messages)
+    # Add instruction for token truncation.
+    context.append({"role": "system", "content": "回复消息字数小于250字"})
+    logging.info("Built context with %d messages for API call.", len(context))
+    return context
+
+# ----- Main Loop -----
 def main():
     setup_logging()
     logging.info("Chatbot starting up with wxauto and full error logging...")
     
     try:
-        # Get necessary user inputs.
         api_key = input("Enter OpenAI API Key: ").strip()
         model_name = input("Enter Model Name (e.g., gpt-3.5-turbo): ").strip()
         system_prompt = input("Enter System Prompt: ").strip()
         logging.info("Received API key, model name, and system prompt.")
         
-        # Initialize OpenAI client.
         client = OpenAI(api_key=api_key, base_url="https://api.siliconflow.cn/v1")
-        
-        # Initialize conversation history with the system prompt.
         conversation = [{"role": "system", "content": system_prompt}]
         logging.info("Initialized conversation history with system prompt.")
         
-        # Initialize wxauto for WeChat automation.
         wx = WeChat()
-        bot_nickname = "@" + wx.nickname  # Bot's WeChat nickname.
+        bot_nickname = "@" + wx.nickname
         logging.info("wxauto initialized. Bot nickname: %s", bot_nickname)
         
         logging.info("Entering main loop for processing messages...")
         
-        # Main loop to process new messages.
         while True:
             new_messages = wx.GetAllNewMessage()
             if new_messages:
                 logging.info("New messages received: %s", new_messages)
-            # The keys in new_messages represent chat groups.
             for chat, messages_list in new_messages.items():
                 cleaned_chat = clean_sender(chat)
                 for msg in messages_list:
-                    # Each msg is a tuple; the first element is the actual sender,
-                    # and the second is the message text.
                     actual_sender, msg_text = msg[0], msg[1]
-                    # Skip if the sender is "SYS" or "Self"
                     if actual_sender in ["SYS", "Self"]:
                         continue
-                    # Process only if the message text starts with the bot's nickname.
                     if not msg_text.startswith(bot_nickname):
                         continue
-                    # Remove the bot mention from the text.
                     user_query = msg_text[len(bot_nickname):].strip()
                     logging.info("Message in chat '%s' from %s: %s", cleaned_chat, actual_sender, user_query)
                     
-                    # Append the user's message to the conversation history.
                     conversation.append({"role": "user", "content": user_query})
                     
                     try:
-                        logging.info("Sending conversation history to OpenAI API.")
+                        context = build_context(conversation, system_prompt, client, round_threshold=5, recent_rounds=2)
+                        logging.info("Sending conversation context to OpenAI API: %s", context)
+                        
                         response = client.chat.completions.create(
                             model=model_name,
-                            messages=conversation,
+                            messages=context,
                             temperature=0.7,
                             max_tokens=150
                         )
                         reply = response.choices[0].message.content.strip()
                         logging.info("Received reply from OpenAI API: %s", reply)
                         
-                        # Send the reply via WeChat using the original chat group name.
                         wx.SendMsg(reply, who=cleaned_chat)
                         logging.info("Sent reply to chat '%s': %s", cleaned_chat, reply)
                         
-                        # Append the assistant's reply to the conversation history.
                         conversation.append({"role": "assistant", "content": reply})
-                        
-                        # Trim the conversation history to keep only recent rounds.
                         conversation = trim_conversation_history(conversation, max_rounds=15)
+                        save_conversation_log(conversation)
                     
                     except Exception as e:
                         logging.error("Error generating reply for chat '%s': %s", cleaned_chat, e, exc_info=True)
                         wx.SendMsg("Sorry, encountered an error processing your request.", who=cleaned_chat)
             
-            time.sleep(1)  # Poll for new messages every second.
+            time.sleep(1)
     
     except Exception as e:
         logging.critical("Fatal error in main loop", exc_info=True)
