@@ -40,7 +40,7 @@ def main():
     reminder_manager.start()
 
     # This dictionary holds pending reminder confirmations.
-    # Key: sender, Value: dict with keys 'reminder_text' and 'suggested_time'
+    # Key: sender, Value: dict with keys 'reminder_text' and 'suggested_time'P
     pending_reminders = {}
 
     logging.info("Chatbot is running...")
