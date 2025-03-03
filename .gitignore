@@ -34,3 +34,4 @@ pip-delete-this-directory.txt
 build
 dist
 main.spec
+test.spec

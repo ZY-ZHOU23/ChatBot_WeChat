@@ -1,8 +1,6 @@
-
 import time
 import logging
-import date
-
+import re
 from wxauto import WeChat
 from openai import OpenAI
 
@@ -12,6 +10,13 @@ from helpers import calculate_default_reminder_time, extract_time_correction
 
 # Set max output length
 MAX_OUTPUT_LENGTH = 300
+
+def clean_sender(sender: str) -> str:
+    """
+    Cleans the sender's name by removing any trailing member count.
+    Example: "test（3）" -> "test", "group(5)" -> "group"
+    """
+    return re.sub(r'[\(（]\d+[\)）]\s*$', '', sender)
 
 def main():
 
@@ -39,8 +44,7 @@ def main():
     reminder_manager = ReminderManager(wx)
     reminder_manager.start()
 
-    # This dictionary holds pending reminder confirmations.
-    # Key: sender, Value: dict with keys 'reminder_text' and 'suggested_time'P
+    # Dictionary to hold pending reminder confirmations.
     pending_reminders = {}
 
     logging.info("Chatbot is running...")
@@ -48,8 +52,11 @@ def main():
     while True:
         new_messages = wx.GetAllNewMessage()
         for sender, messages_list in new_messages.items():
+            cleaned_sender = clean_sender(sender)  # Clean group name before processing
+            
             for message in messages_list:
                 msg_text = message[1]
+                
                 # Only process messages directed at the bot.
                 if not msg_text.startswith(agent_name):
                     continue
@@ -58,65 +65,59 @@ def main():
                 user_query = msg_text[len(agent_name):].strip()
 
                 # --------- Pending Reminder Confirmation or Correction ---------
-                if sender in pending_reminders:
-                    pending = pending_reminders[sender]
-                    # Check if the user provided a correction (e.g., a time like "15:30")
+                if cleaned_sender in pending_reminders:
+                    pending = pending_reminders[cleaned_sender]
                     correction = extract_time_correction(user_query, pending['suggested_time'])
+                    
                     if correction is not None:
-                        # Update the suggested time.
                         pending['suggested_time'] = correction
                         formatted_time = correction.strftime("%Y-%m-%d %H:%M")
                         wx.SendMsg(
                             f"你希望我在{formatted_time}中国时间提醒你{pending['reminder_text']}吗？ (yes/no)",
-                            who=sender
+                            who=cleaned_sender
                         )
                         continue
-                    # If the user confirms with "yes"
                     elif user_query.lower() == "yes":
                         scheduled_time = pending['suggested_time']
-                        reminder_manager.add_reminder(sender, pending['reminder_text'], scheduled_time)
+                        reminder_manager.add_reminder(cleaned_sender, pending['reminder_text'], scheduled_time)
                         wx.SendMsg(
                             f"好的，我会在 {scheduled_time.strftime('%Y-%m-%d %H:%M')} 中国时间提醒你{pending['reminder_text']}.",
-                            who=sender
+                            who=cleaned_sender
                         )
-                        pending_reminders.pop(sender)
+                        pending_reminders.pop(cleaned_sender)
                         continue
-                    # If the user replies "no", ask for a correction.
                     elif user_query.lower() == "no":
-                        wx.SendMsg("好的，请告诉我您希望的提醒时间（例如：15:30）", who=sender)
+                        wx.SendMsg("好的，请告诉我您希望的提醒时间（例如：15:30）", who=cleaned_sender)
                         continue
-                    # Otherwise, if the user response is ambiguous, prompt again.
                     else:
-                        wx.SendMsg("请确认提醒时间或提供新的时间，例如：15:30", who=sender)
+                        wx.SendMsg("请确认提醒时间或提供新的时间，例如：15:30", who=cleaned_sender)
                         continue
 
                 # --------- New Reminder Request Detection ---------
                 if "提醒" in user_query:
-                    # Extract the content after the keyword "提醒" as the reminder subject.
                     idx = user_query.find("提醒")
                     reminder_subject = user_query[idx + len("提醒"):].strip()
                     if not reminder_subject:
-                        reminder_subject = user_query  # Fallback if nothing specific follows.
-                    # Calculate a default reminder time based on the message and current system time.
+                        reminder_subject = user_query
                     default_time = calculate_default_reminder_time(user_query)
-                    pending_reminders[sender] = {
+                    
+                    pending_reminders[cleaned_sender] = {
                         'reminder_text': reminder_subject,
                         'suggested_time': default_time
                     }
                     formatted_time = default_time.strftime("%Y-%m-%d %H:%M")
                     wx.SendMsg(
                         f"你希望我在{formatted_time}中国时间提醒你{reminder_subject}吗？ (yes/no)",
-                        who=sender
+                        who=cleaned_sender
                     )
-                    continue  # Skip normal conversation processing for reminder commands.
+                    continue
 
                 # --------- Normal Conversation Flow ---------
-                logging.info("Received query from %s: %s", sender, user_query)
+                logging.info("Received query from %s: %s", cleaned_sender, user_query)
                 conversation.add_message("user", user_query)
 
                 try:
                     history = conversation.get_history()
-                    # Include a max_tokens parameter to limit generated output.
                     response = client.chat.completions.create(
                         model=model_name,
                         messages=history,
@@ -125,16 +126,16 @@ def main():
                     )
                     reply_text = response.choices[0].message.content.strip()
 
-                    # Enforce output-length limitation.
                     if len(reply_text) > MAX_OUTPUT_LENGTH:
                         reply_text = reply_text[:MAX_OUTPUT_LENGTH] + "..."
-
-                    wx.SendMsg(reply_text, who=sender)
-                    logging.info("Replied to %s: %s", sender, reply_text)
+                    
+                    wx.SendMsg(reply_text, who=cleaned_sender)
+                    logging.info("Replied to %s: %s", cleaned_sender, reply_text)
                     conversation.add_message("assistant", reply_text)
                 except Exception as e:
-                    logging.error("Error generating response for %s: %s", sender, e, exc_info=True)
-                    wx.SendMsg("Sorry, I encountered an error processing your request.", who=sender)
+                    logging.error("Error generating response for %s: %s", cleaned_sender, e, exc_info=True)
+                    wx.SendMsg("Sorry, I encountered an error processing your request.", who=cleaned_sender)
+        
         time.sleep(1)  # Check for new messages every second.
 
 if __name__ == "__main__":
