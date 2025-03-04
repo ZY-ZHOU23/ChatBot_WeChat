@@ -22,14 +22,12 @@ def summarize_history(client, text):
 
 def build_context(conversation, system_prompt, client, round_threshold=5, recent_rounds=2):
     """
-    Build the conversation context for the API call.
+    Builds the conversation context for the API call.
     
-    If non-system messages exceed round_threshold rounds, summarize older messages.
-    Then build the context as:
-      - system prompt,
-      - (optionally) summary message,
-      - recent rounds,
-      - and a final system instruction for truncation.
+    1. Start with the system prompt.
+    2. If non-system messages exceed round_threshold rounds, summarize older messages.
+    3. Append the most recent rounds in full detail.
+    4. Add a final system instruction: "回复消息字数小于250字".
     """
     non_system = [m for m in conversation if m["role"] != "system"]
     summary_message = None

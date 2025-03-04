@@ -29,17 +29,23 @@ def setup_logging():
     sys.excepthook = log_exceptions
 
 def clean_sender(sender: str) -> str:
+    """Remove surrounding whitespace and any trailing member count (e.g. '(3)') from a sender's name."""
     cleaned = sender.strip()
     cleaned = re.sub(r'[\(（]\s*\d+\s*[\)）]', '', cleaned)
     return cleaned.strip()
 
 def trim_conversation_history(messages, max_rounds=15):
+    """
+    Keeps system messages intact and trims non-system messages to the most recent rounds.
+    Each round is assumed to consist of 2 messages (user + assistant).
+    """
     system_messages = [m for m in messages if m["role"] == "system"]
     other_messages = [m for m in messages if m["role"] != "system"]
     trimmed_other = other_messages[-max_rounds * 2:]
     return system_messages + trimmed_other
 
 def save_conversation_log(conversation):
+    """Save the conversation history (a nested dictionary) in JSON format for inspection."""
     try:
         with open("conversation_history.log", "w", encoding="utf-8") as f:
             json.dump(conversation, f, ensure_ascii=False, indent=2)

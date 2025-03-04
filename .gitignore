@@ -35,3 +35,4 @@ build
 dist
 main.spec
 test.spec
+memo_manager.py
