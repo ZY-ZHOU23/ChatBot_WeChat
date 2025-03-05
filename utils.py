@@ -4,6 +4,12 @@ import sys
 import re
 import json
 
+"""
+Builds the conversation context for each API call by starting with the system prompt, 
+optionally adding a summary (if conversation history is long), 
+appending the most recent conversation rounds, and adding a final instruction ("回复消息字数小于250字").
+"""
+
 def setup_logging():
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)

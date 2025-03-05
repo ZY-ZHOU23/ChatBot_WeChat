@@ -1,6 +1,9 @@
 import logging
 
-def summarize_history(client, text):
+# Contains helper functions for logging, cleaning sender names, 
+# trimming conversation history, and saving conversation logs.
+
+def summarize_history(client, text, model_name):
     """
     Uses DeepSeek-V3 to generate a short summary of the provided text.
     The prompt instructs: "总结对话历史(字数不要太多)："
@@ -8,10 +11,10 @@ def summarize_history(client, text):
     logging.info("Triggering summarization for older messages (text length: %d characters)", len(text))
     try:
         summary_response = client.chat.completions.create(
-            model="deepseek-ai/DeepSeek-V3",
-            messages=[{"role": "user", "content": "总结对话历史(字数不要太多)：\n" + text}],
+            model=model_name,
+            messages=[{"role": "user", "content": "这是我们之前的对话记录，请总结我们的对话历史（字数不要太多）：\n" + text}],
             temperature=0.5,
-            max_tokens=100
+            max_tokens=200
         )
         summary = summary_response.choices[0].message.content.strip()
         logging.info("Summarization complete. Summary: %s", summary)
@@ -20,7 +23,7 @@ def summarize_history(client, text):
         logging.error("Error summarizing conversation: %s", e, exc_info=True)
         return ""
 
-def build_context(conversation, system_prompt, client, round_threshold=5, recent_rounds=2):
+def build_context(conversation, system_prompt, client, model_name, round_threshold=5, recent_rounds=2):
     """
     Builds the conversation context for the API call.
     
@@ -34,7 +37,7 @@ def build_context(conversation, system_prompt, client, round_threshold=5, recent
     if len(non_system) > round_threshold * 2:
         older_messages = non_system[:-recent_rounds * 2]
         text = "\n".join([f'{m["role"]}：{m["content"]}' for m in older_messages])
-        summary = summarize_history(client, text)
+        summary = summarize_history(client, text, model_name)
         if summary:
             summary_message = {"role": "system", "content": "对话摘要：" + summary}
             logging.info("Older messages summarized into a summary message.")

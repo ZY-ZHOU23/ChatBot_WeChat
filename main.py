@@ -7,27 +7,49 @@ from utils import setup_logging, clean_sender, trim_conversation_history, save_c
 from context_builder import build_context
 import threading
 
+# You could export the file as a exe file using the command below: 
+# pyinstaller --onefile main.py
+
 # Global conversation history stored per group and per user.
+# Used for independent conversation based on group and user.
 # Structure: { group_chat: { sender: [ {role, content}, ... ] } }
 conversation_history = {}
 
 def main():
+    """
+    functionalities: 
+    - The bot listens for new messages from the WeChat client.
+    - It processes only messages that start with the bot's nickname.
+    - Conversation history is maintained per group and per sender.
+    - For each user message, the bot builds a context (via build_context), 
+      sends it to the OpenAI API, and then sends a personalized reply (prefixed with @{sender}).
+    - Conversation history is trimmed and logged for inspection.
+    """
+
     setup_logging()
     logging.info("Chatbot starting up with wxauto and general conversation mode...")
     
     try:
-        api_key = input("Enter OpenAI API Key: ").strip()
-        model_name = input("Enter Model Name (e.g., gpt-3.5-turbo): ").strip()
+        # Console input
+        base_url = input("Enter the base url: ").strip()
+        api_key = input("Enter API Key: ").strip()
+        model_name = input("Enter Model Name (different by cloud service): ").strip()
         system_prompt = input("Enter System Prompt: ").strip()
         logging.info("Received API key, model name, and system prompt.")
         
-        client = OpenAI(api_key=api_key, base_url="https://api.siliconflow.cn/v1")
+        # Initialize LLM and wechat automation 
+        """
+        some base url
+        Silicon flow: "https://api.siliconflow.cn/v1"
+        Volcengine (can do online search): "https://ark.cn-beijing.volces.com/api/v3/bots"
+        """
+        client = OpenAI(api_key=api_key, base_url=base_url)
         wx = WeChat()
         bot_nickname = "@" + wx.nickname
         logging.info("wxauto initialized. Bot nickname: %s", bot_nickname)
-        
         logging.info("Entering main loop for processing messages...")
         
+        # Main conversation loop
         while True:
             new_messages = wx.GetAllNewMessage()
             if new_messages:
@@ -63,7 +85,7 @@ def main():
                     try:
                         # Build context using this sender's conversation history.
                         user_history = conversation_history[cleaned_chat][actual_sender]
-                        context = build_context(user_history, system_prompt, client, round_threshold=5, recent_rounds=2)
+                        context = build_context(user_history, system_prompt, client, model_name, round_threshold=5, recent_rounds=2)
                         logging.info("Sending conversation context to OpenAI API for %s in '%s': %s", actual_sender, cleaned_chat, context)
                         
                         response = client.chat.completions.create(
